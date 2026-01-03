@@ -105,6 +105,62 @@ python3 scripts/eval_medagents_outputs.py \
   --pred_file outputs/MedQA/openai-syn_verif.jsonl
 ```
 
+## Leakage checks (for POC-A evidence cache)
+
+We use a **pre-inference filter** (drop obvious QA-formatted artifacts in `evidence[]`) and a **post-run audit**
+(measure remaining leakage signals in the evidence).
+
+### Pre-inference: filter evidence snippets
+
+```bash
+python3 scripts/filter_evidence_leakage.py \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
+  --evidence_json data/retrieved_med_qa_test.json \
+  --out_json data/retrieved_med_qa_test.filtered.json \
+  --mode artifact_only \
+  --overwrite
+```
+
+To **turn off** leakage filtering (pass-through, no snippet filtering):
+
+```bash
+python3 scripts/filter_evidence_leakage.py \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
+  --evidence_json data/retrieved_med_qa_test.json \
+  --out_json data/retrieved_med_qa_test.nofilter.json \
+  --disable_filter \
+  --overwrite
+```
+
+If you want a more aggressive filter:
+
+```bash
+python3 scripts/filter_evidence_leakage.py \
+  --mode strict \
+  --overwrite
+```
+
+### Post-run: audit leakage signals
+
+Audit full dataset overlap:
+
+```bash
+python3 scripts/audit_evidence_leakage.py \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
+  --evidence_json data/retrieved_med_qa_test.json \
+  --topk 5
+```
+
+Audit only the questions you actually ran (recommended):
+
+```bash
+python3 scripts/audit_evidence_leakage.py \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
+  --evidence_json data/retrieved_med_qa_test.json \
+  --pred_jsonl outputs/MedQA/openai-syn_verif.jsonl \
+  --topk 5
+```
+
 ## Project Structure
 
 - `src/` - Main source code
