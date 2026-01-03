@@ -4,21 +4,11 @@ Run vendored MedAgents "as-is" (no RAG) without modifying upstream code.
 
 How it works:
 - Adds `vendor/med_agents/upstream/` to sys.path so upstream flat imports work.
-- Sets Azure OpenAI config via env vars at runtime (upstream api_utils.py hardcodes empty strings).
 - Runs the same loop as upstream run.py and writes JSONL.
 
-Env vars:
-
-OpenAI (direct):
+Env vars (OpenAI direct):
 - OPENAI_API_KEY (required)
 - OPENAI_MODEL_NAME (required)
-
-Azure OpenAI (optional fallback / alternative):
-- AZURE_OPENAI_API_BASE
-- AZURE_OPENAI_API_VERSION
-- AZURE_OPENAI_API_KEY
-- optional: AZURE_OPENAI_CHATGPT_ENGINE (deployment name override)
-- optional: AZURE_OPENAI_GPT4_ENGINE (deployment name override)
 """
 
 from __future__ import annotations
@@ -69,36 +59,6 @@ def _add_upstream_to_syspath() -> Path:
         raise RuntimeError(f"Missing vendored upstream dir: {upstream_dir}")
     sys.path.insert(0, str(upstream_dir))
     return upstream_dir
-
-
-def _configure_azure_openai() -> None:
-    import openai  # imported after deps are installed
-
-    api_base = os.getenv("AZURE_OPENAI_API_BASE")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-
-    missing = [
-        k
-        for k, v in [
-            ("AZURE_OPENAI_API_BASE", api_base),
-            ("AZURE_OPENAI_API_VERSION", api_version),
-            ("AZURE_OPENAI_API_KEY", api_key),
-        ]
-        if not v
-    ]
-
-    if missing:
-        raise RuntimeError(
-            "Missing Azure OpenAI env vars: "
-            + ", ".join(missing)
-            + "\nSet them before running (we keep upstream code untouched)."
-        )
-
-    openai.api_type = "azure"
-    openai.api_base = api_base
-    openai.api_version = api_version
-    openai.api_key = api_key
 
 
 def _configure_openai_direct() -> str:
@@ -209,8 +169,8 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument(
         "--llm_provider",
-        default="openai" if os.getenv("OPENAI_API_KEY") else "azure",
-        choices=["openai", "azure"],
+        default="openai",
+        choices=["openai"],
         help="Which API to use for ChatCompletion calls.",
     )
     p.add_argument(
@@ -327,23 +287,9 @@ def main() -> int:
 
     if args.dry_run:
         handler = None
-    elif args.llm_provider == "openai":
+    else:
         model = _configure_openai_direct()
         handler = _OpenAIChatHandler(model)
-    else:
-        _configure_azure_openai()
-        from api_utils import api_handler  # type: ignore
-
-        handler = api_handler(args.model_name)
-        # allow overriding Azure deployment names without editing upstream api_utils.py
-        if args.model_name == "chatgpt":
-            dep = os.getenv("AZURE_OPENAI_CHATGPT_ENGINE")
-            if dep:
-                handler.engine = dep
-        if args.model_name == "gpt4":
-            dep = os.getenv("AZURE_OPENAI_GPT4_ENGINE")
-            if dep:
-                handler.engine = dep
 
     dataobj = MyDataset("test", args, traindata_obj=None)
     end_pos = len(dataobj) if args.end_pos == -1 else args.end_pos

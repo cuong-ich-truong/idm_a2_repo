@@ -39,14 +39,6 @@ cp env.example .env
 export OPENAI_API_KEY="<your-key>"
 export OPENAI_MODEL_NAME="gpt-3.5-turbo"   # or your preferred ChatCompletion model
 
-# Azure OpenAI (only if using --llm_provider azure)
-export AZURE_OPENAI_API_BASE="https://<your-resource>.openai.azure.com/"
-export AZURE_OPENAI_API_VERSION="2023-07-01-preview"
-export AZURE_OPENAI_API_KEY="<your-key>"
-
-# Optional: override deployment names used by MedAgents
-export AZURE_OPENAI_CHATGPT_ENGINE="gpt-35-turbo-16k"
-export AZURE_OPENAI_GPT4_ENGINE="gpt-4"
 ```
 
 ### Check OpenAI connection (recommended)
@@ -93,29 +85,14 @@ python3 scripts/run_medagents_baseline.py \
   --method syn_verif \
   --max_attempt_vote 3 \
   --start_pos 0 \
-  --end_pos 10 \
+  --end_pos 1 \
   --output_dir outputs/MedQA/ \
   --evidence_json data/retrieved_med_qa_test.json \
   --evidence_mode always \
   --evidence_topk 5 \
   --evidence_max_chars 2500 \
-  --run_tag t0_10 \
+  --run_tag t0_1 \
   --log_evidence
-```
-
-### Real run (small slice) — Azure OpenAI
-
-```bash
-python3 scripts/run_medagents_baseline.py \
-  --llm_provider azure \
-  --model_name chatgpt \
-  --dataset_name MedQA \
-  --dataset_dir vendor/med_agents/datasets/MedQA/ \
-  --method syn_verif \
-  --max_attempt_vote 3 \
-  --start_pos 0 \
-  --end_pos 20 \
-  --output_dir outputs/MedQA/
 ```
 
 ### Evaluate
