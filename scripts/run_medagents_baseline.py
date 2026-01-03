@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""
+Run vendored MedAgents "as-is" (no RAG) without modifying upstream code.
+
+How it works:
+- Adds `vendor/med_agents/upstream/` to sys.path so upstream flat imports work.
+- Sets Azure OpenAI config via env vars at runtime (upstream api_utils.py hardcodes empty strings).
+- Runs the same loop as upstream run.py and writes JSONL.
+
+Env vars:
+
+OpenAI (direct):
+- OPENAI_API_KEY (required)
+- OPENAI_MODEL_NAME (required)
+
+Azure OpenAI (optional fallback / alternative):
+- AZURE_OPENAI_API_BASE
+- AZURE_OPENAI_API_VERSION
+- AZURE_OPENAI_API_KEY
+- optional: AZURE_OPENAI_CHATGPT_ENGINE (deployment name override)
+- optional: AZURE_OPENAI_GPT4_ENGINE (deployment name override)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from string import punctuation
+
+import tqdm
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _load_dotenv_if_present() -> None:
+    """
+    Loads project-local `.env` (gitignored) so you don't need to export vars every run.
+    """
+    env_path = _project_root() / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except Exception:
+        # keep script runnable even if dependency is missing
+        return
+    load_dotenv(env_path)
+
+
+def _add_upstream_to_syspath() -> Path:
+    upstream_dir = _project_root() / "vendor" / "med_agents" / "upstream"
+    if not upstream_dir.exists():
+        raise RuntimeError(f"Missing vendored upstream dir: {upstream_dir}")
+    sys.path.insert(0, str(upstream_dir))
+    return upstream_dir
+
+
+def _configure_azure_openai() -> None:
+    import openai  # imported after deps are installed
+
+    api_base = os.getenv("AZURE_OPENAI_API_BASE")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+
+    missing = [k for k, v in [
+        ("AZURE_OPENAI_API_BASE", api_base),
+        ("AZURE_OPENAI_API_VERSION", api_version),
+        ("AZURE_OPENAI_API_KEY", api_key),
+    ] if not v]
+
+    if missing:
+        raise RuntimeError(
+            "Missing Azure OpenAI env vars: "
+            + ", ".join(missing)
+            + "\nSet them before running (we keep upstream code untouched)."
+        )
+
+    openai.api_type = "azure"
+    openai.api_base = api_base
+    openai.api_version = api_version
+    openai.api_key = api_key
+
+
+def _configure_openai_direct() -> str:
+    import openai  # imported after deps are installed
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    model = os.getenv("OPENAI_MODEL_NAME")
+
+    if not api_key:
+        raise RuntimeError("Missing OPENAI_API_KEY")
+    if not model:
+        raise RuntimeError("Missing OPENAI_MODEL_NAME")
+
+    # openai==0.27.x expects this for direct OpenAI usage
+    openai.api_key = api_key
+    return model
+
+
+class _OpenAIChatHandler:
+    """
+    Minimal adapter that matches the upstream handler API expected by `utils.fully_decode`.
+    """
+
+    def __init__(self, model: str):
+        self.model = model
+        self.call_count = 0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_total_tokens = 0
+        self.total_wall_s = 0.0
+
+    def get_output_multiagent(
+        self,
+        system_role,
+        user_input,
+        max_tokens,
+        temperature=0,
+        frequency_penalty=0,
+        presence_penalty=0,
+        stop=None,
+    ):
+        import openai
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                self.call_count += 1
+                call_no = self.call_count
+                t0 = time.time()
+                sys_len = len(system_role or "")
+                usr_len = len(user_input or "")
+                print(
+                    f"[openai] call#{call_no} attempt={attempt+1}/{max_attempts} "
+                    f"model={self.model} max_tokens={max_tokens} temp={temperature} "
+                    f"chars(system={sys_len},user={usr_len})"
+                )
+                resp = openai.ChatCompletion.create(
+                    model=self.model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=1,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
+                    stop=stop,
+                    messages=[
+                        {"role": "system", "content": system_role},
+                        {"role": "user", "content": user_input},
+                    ],
+                )
+                dt = time.time() - t0
+                self.total_wall_s += dt
+
+                usage = getattr(resp, "usage", None)
+                if usage:
+                    pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+                    ct = int(getattr(usage, "completion_tokens", 0) or 0)
+                    tt = int(getattr(usage, "total_tokens", 0) or 0)
+                    self.total_prompt_tokens += pt
+                    self.total_completion_tokens += ct
+                    self.total_total_tokens += tt
+                    print(f"[openai] call#{call_no} done in {dt:.2f}s tokens(prompt={pt},completion={ct},total={tt})")
+                else:
+                    print(f"[openai] call#{call_no} done in {dt:.2f}s tokens(usage=missing)")
+                if resp.choices and resp.choices[0].message and "content" in resp.choices[0].message:
+                    return resp.choices[0].message["content"]
+                return "ERROR."
+            except Exception as e:
+                print(f"[warn] OpenAI call failed (attempt {attempt+1}/{max_attempts}): {e}")
+                if attempt == max_attempts - 1:
+                    return "ERROR."
+
+
+def main() -> int:
+    _load_dotenv_if_present()
+    _add_upstream_to_syspath()
+
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--llm_provider",
+        default="openai" if os.getenv("OPENAI_API_KEY") else "azure",
+        choices=["openai", "azure"],
+        help="Which API to use for ChatCompletion calls.",
+    )
+    p.add_argument(
+        "--model_name",
+        default="chatgpt",
+        help="Run label used for output filename (does not have to match provider model id).",
+    )
+    p.add_argument("--dataset_name", default="MedQA", choices=["MedQA", "PubMedQA", "MedMCQA", "MedicationQA"])
+    p.add_argument("--dataset_dir", default="vendor/med_agents/datasets/MedQA/")
+    p.add_argument("--start_pos", type=int, default=0)
+    p.add_argument("--end_pos", type=int, default=5, help="-1 means full dataset")
+    p.add_argument("--output_dir", default="outputs/MedQA/")
+    p.add_argument("--method", type=str, default="syn_verif", choices=["syn_verif", "syn_only", "anal_only", "base_direct", "base_cot"])
+    p.add_argument("--max_attempt_vote", type=int, default=3)
+    p.add_argument("--overwrite", action="store_true", help="overwrite output file (default: append)")
+    p.add_argument("--dry_run", action="store_true", help="no API calls; writes stub records for wiring checks only")
+    args = p.parse_args()
+
+    output_dir = _project_root() / args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / f"{args.model_name}-{args.method}.jsonl"
+    if args.overwrite and out_path.exists():
+        out_path.unlink()
+
+    # upstream imports (flat)
+    from data_utils import MyDataset  # type: ignore
+    from utils import fully_decode  # type: ignore
+
+    if args.dry_run:
+        handler = None
+    elif args.llm_provider == "openai":
+        model = _configure_openai_direct()
+        handler = _OpenAIChatHandler(model)
+    else:
+        _configure_azure_openai()
+        from api_utils import api_handler  # type: ignore
+
+        handler = api_handler(args.model_name)
+        # allow overriding Azure deployment names without editing upstream api_utils.py
+        if args.model_name == "chatgpt":
+            dep = os.getenv("AZURE_OPENAI_CHATGPT_ENGINE")
+            if dep:
+                handler.engine = dep
+        if args.model_name == "gpt4":
+            dep = os.getenv("AZURE_OPENAI_GPT4_ENGINE")
+            if dep:
+                handler.engine = dep
+
+    dataobj = MyDataset("test", args, traindata_obj=None)
+    end_pos = len(dataobj) if args.end_pos == -1 else args.end_pos
+    test_range = range(args.start_pos, end_pos)
+
+    with out_path.open("a", encoding="utf-8") as f:
+        for idx in tqdm.tqdm(test_range, desc=f"{args.start_pos} ~ {end_pos}"):
+            raw_sample = dataobj.get_by_idx(idx)
+            question_raw = raw_sample["question"]
+            question = question_raw if question_raw and question_raw[-1] in punctuation else question_raw + "?"
+
+            if args.dataset_name in ["MedQA", "MedMCQA"] or "MMLU" in args.dataset_name:
+                options = raw_sample["options"]
+                gold_answer = raw_sample["answer_idx"]
+            elif args.dataset_name == "PubMedQA":
+                question = raw_sample["context"] + " " + question
+                options = raw_sample["options"]
+                gold_answer = raw_sample["answer_idx"]
+            elif args.dataset_name in ["MedicationQA"]:
+                options = ""
+                gold_answer = raw_sample["answer_idx"]
+            else:
+                raise ValueError(f"Unsupported dataset_name={args.dataset_name}")
+
+            if args.dry_run:
+                data_info = {
+                    "idx": idx,
+                    "question": question,
+                    "options": options,
+                    "pred_answer": "",
+                    "gold_answer": gold_answer,
+                    "raw_output": "DRY_RUN",
+                }
+            else:
+                assert handler is not None
+                data_info = fully_decode(idx, idx, question, options, gold_answer, handler, args, dataobj)
+                # add extra audit-friendly fields without changing upstream logic/prompts
+                data_info["idx"] = idx
+                if isinstance(raw_sample, dict) and "meta_info" in raw_sample:
+                    data_info["meta_info"] = raw_sample["meta_info"]
+
+            f.write(json.dumps(data_info) + "\n")
+
+    if isinstance(handler, _OpenAIChatHandler):
+        print(
+            "[openai] run summary: "
+            f"calls={handler.call_count} "
+            f"tokens(prompt={handler.total_prompt_tokens},completion={handler.total_completion_tokens},total={handler.total_total_tokens}) "
+            f"wall_s={handler.total_wall_s:.2f}"
+        )
+    print(f"[done] wrote {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
