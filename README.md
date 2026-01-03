@@ -60,7 +60,6 @@ python3 scripts/check_openai.py
 ```bash
 python scripts/run_medagents_baseline.py \
   --dry_run \
-  --overwrite \
   --start_pos 0 \
   --end_pos 2 \
   --output_dir outputs/MedQA/
@@ -76,7 +75,6 @@ python3 scripts/run_medagents_baseline.py \
   --dataset_dir vendor/med_agents/datasets/MedQA/ \
   --method syn_verif \
   --max_attempt_vote 3 \
-  --overwrite \
   --start_pos 0 \
   --end_pos 1 \
   --output_dir outputs/MedQA/
@@ -94,7 +92,6 @@ python3 scripts/run_medagents_baseline.py \
   --dataset_dir vendor/med_agents/datasets/MedQA/ \
   --method syn_verif \
   --max_attempt_vote 3 \
-  --overwrite \
   --start_pos 0 \
   --end_pos 10 \
   --output_dir outputs/MedQA/ \
@@ -104,28 +101,6 @@ python3 scripts/run_medagents_baseline.py \
   --evidence_max_chars 2500 \
   --run_tag t0_10 \
   --log_evidence
-```
-
-RET gate (inject only when the gate says YES):
-
-```bash
-python3 scripts/run_medagents_baseline.py \
-  --llm_provider openai \
-  --model_name openai_ret \
-  --dataset_name MedQA \
-  --dataset_dir vendor/med_agents/datasets/MedQA/ \
-  --method syn_verif \
-  --max_attempt_vote 3 \
-  --overwrite \
-  --start_pos 0 \
-  --end_pos 1 \
-  --output_dir outputs/MedQA/ \
-  --evidence_json data/retrieved_med_qa_test.filtered.json \
-  --evidence_mode ret_gate \
-  --ret_gate_conf_threshold 80 \
-  --ret_gate_budget 5 \
-  --ret_gate_log \
-  --run_tag t1
 ```
 
 ### Real run (small slice) — Azure OpenAI
@@ -138,7 +113,6 @@ python3 scripts/run_medagents_baseline.py \
   --dataset_dir vendor/med_agents/datasets/MedQA/ \
   --method syn_verif \
   --max_attempt_vote 3 \
-  --overwrite \
   --start_pos 0 \
   --end_pos 20 \
   --output_dir outputs/MedQA/
