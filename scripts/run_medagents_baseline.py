@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -23,6 +24,9 @@ from pathlib import Path
 from string import punctuation
 
 import tqdm
+
+
+LOGGER = logging.getLogger("run_medagents_baseline")
 
 
 def _project_root() -> Path:
@@ -110,10 +114,16 @@ class _OpenAIChatHandler:
                 t0 = time.time()
                 sys_len = len(system_role or "")
                 usr_len = len(user_input or "")
-                print(
-                    f"[openai] call#{call_no} attempt={attempt+1}/{max_attempts} "
-                    f"model={self.model} max_tokens={max_tokens} temp={temperature} "
-                    f"chars(system={sys_len},user={usr_len})"
+                LOGGER.debug(
+                    "[openai] call#%s attempt=%s/%s model=%s max_tokens=%s temp=%s chars(system=%s,user=%s)",
+                    call_no,
+                    attempt + 1,
+                    max_attempts,
+                    self.model,
+                    max_tokens,
+                    temperature,
+                    sys_len,
+                    usr_len,
                 )
                 resp = openai.ChatCompletion.create(
                     model=self.model,
@@ -139,12 +149,19 @@ class _OpenAIChatHandler:
                     self.total_prompt_tokens += pt
                     self.total_completion_tokens += ct
                     self.total_total_tokens += tt
-                    print(
-                        f"[openai] call#{call_no} done in {dt:.2f}s tokens(prompt={pt},completion={ct},total={tt})"
+                    LOGGER.debug(
+                        "[openai] call#%s done in %.2fs tokens(prompt=%s,completion=%s,total=%s)",
+                        call_no,
+                        dt,
+                        pt,
+                        ct,
+                        tt,
                     )
                 else:
-                    print(
-                        f"[openai] call#{call_no} done in {dt:.2f}s tokens(usage=missing)"
+                    LOGGER.debug(
+                        "[openai] call#%s done in %.2fs tokens(usage=missing)",
+                        call_no,
+                        dt,
                     )
                 if (
                     resp.choices
@@ -154,11 +171,35 @@ class _OpenAIChatHandler:
                     return resp.choices[0].message["content"]
                 return "ERROR."
             except Exception as e:
-                print(
-                    f"[warn] OpenAI call failed (attempt {attempt+1}/{max_attempts}): {e}"
+                LOGGER.warning(
+                    "[warn] OpenAI call failed (attempt %s/%s): %r",
+                    attempt + 1,
+                    max_attempts,
+                    e,
                 )
                 if attempt == max_attempts - 1:
                     return "ERROR."
+
+
+def _setup_logging(log_path: Path) -> None:
+    """
+    File gets full debug logs (per-call details). Console stays minimal.
+    """
+    LOGGER.setLevel(logging.DEBUG)
+    LOGGER.handlers.clear()
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_h = logging.FileHandler(log_path, encoding="utf-8")
+    file_h.setLevel(logging.DEBUG)
+    file_h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+    console_h = logging.StreamHandler(stream=sys.stdout)
+    console_h.setLevel(logging.INFO)
+    console_h.setFormatter(logging.Formatter("%(message)s"))
+
+    LOGGER.addHandler(file_h)
+    LOGGER.addHandler(console_h)
 
 
 def main() -> int:
@@ -247,8 +288,9 @@ def main() -> int:
         safe_tag = safe_tag[:40]
     tag_part = f"-{safe_tag}" if safe_tag else ""
     out_path = output_dir / f"{args.model_name}-{args.method}{tag_part}-{run_ts}.jsonl"
-    if args.overwrite and out_path.exists():
-        out_path.unlink()
+    log_path = out_path.with_suffix(".log")
+    _setup_logging(log_path)
+    LOGGER.info("[log] %s", log_path)
 
     # upstream imports (flat)
     from data_utils import MyDataset  # type: ignore
@@ -374,13 +416,15 @@ def main() -> int:
             f.write(json.dumps(data_info) + "\n")
 
     if isinstance(handler, _OpenAIChatHandler):
-        print(
-            "[openai] run summary: "
-            f"calls={handler.call_count} "
-            f"tokens(prompt={handler.total_prompt_tokens},completion={handler.total_completion_tokens},total={handler.total_total_tokens}) "
-            f"wall_s={handler.total_wall_s:.2f}"
+        LOGGER.info(
+            "[openai] run summary: calls=%s tokens(prompt=%s,completion=%s,total=%s) wall_s=%.2f",
+            handler.call_count,
+            handler.total_prompt_tokens,
+            handler.total_completion_tokens,
+            handler.total_total_tokens,
+            handler.total_wall_s,
         )
-    print(f"[done] wrote {out_path}")
+    LOGGER.info("[done] wrote %s", out_path)
     return 0
 
 
