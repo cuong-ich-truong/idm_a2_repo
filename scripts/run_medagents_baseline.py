@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from string import punctuation
 
@@ -36,6 +37,15 @@ import tqdm
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _add_project_root_to_syspath() -> Path:
+    """
+    Makes `import src.*` work when running: `python3 scripts/run_medagents_baseline.py`
+    """
+    root = _project_root()
+    sys.path.insert(0, str(root))
+    return root
 
 
 def _load_dotenv_if_present() -> None:
@@ -68,11 +78,15 @@ def _configure_azure_openai() -> None:
     api_version = os.getenv("AZURE_OPENAI_API_VERSION")
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
 
-    missing = [k for k, v in [
-        ("AZURE_OPENAI_API_BASE", api_base),
-        ("AZURE_OPENAI_API_VERSION", api_version),
-        ("AZURE_OPENAI_API_KEY", api_key),
-    ] if not v]
+    missing = [
+        k
+        for k, v in [
+            ("AZURE_OPENAI_API_BASE", api_base),
+            ("AZURE_OPENAI_API_VERSION", api_version),
+            ("AZURE_OPENAI_API_KEY", api_key),
+        ]
+        if not v
+    ]
 
     if missing:
         raise RuntimeError(
@@ -165,20 +179,78 @@ class _OpenAIChatHandler:
                     self.total_prompt_tokens += pt
                     self.total_completion_tokens += ct
                     self.total_total_tokens += tt
-                    print(f"[openai] call#{call_no} done in {dt:.2f}s tokens(prompt={pt},completion={ct},total={tt})")
+                    print(
+                        f"[openai] call#{call_no} done in {dt:.2f}s tokens(prompt={pt},completion={ct},total={tt})"
+                    )
                 else:
-                    print(f"[openai] call#{call_no} done in {dt:.2f}s tokens(usage=missing)")
-                if resp.choices and resp.choices[0].message and "content" in resp.choices[0].message:
+                    print(
+                        f"[openai] call#{call_no} done in {dt:.2f}s tokens(usage=missing)"
+                    )
+                if (
+                    resp.choices
+                    and resp.choices[0].message
+                    and "content" in resp.choices[0].message
+                ):
                     return resp.choices[0].message["content"]
                 return "ERROR."
             except Exception as e:
-                print(f"[warn] OpenAI call failed (attempt {attempt+1}/{max_attempts}): {e}")
+                print(
+                    f"[warn] OpenAI call failed (attempt {attempt+1}/{max_attempts}): {e}"
+                )
                 if attempt == max_attempts - 1:
                     return "ERROR."
 
 
+def _ret_gate_decision(handler, question: str, options) -> bool:
+    """
+    A tiny prompted gate: decide whether to inject evidence for this question.
+    """
+    opts = options
+    try:
+        opts = json.dumps(options, ensure_ascii=False)
+    except Exception:
+        pass
+
+    system_role = "You are a retrieval decision module for medical QA."
+    user_input = (
+        "You decide whether to inject external evidence excerpts.\n"
+        "Important:\n"
+        "- Evidence is noisy and can mislead.\n"
+        "- Retrieving/using evidence is costly.\n"
+        "- Default to NO.\n"
+        "- Say YES only if evidence is very likely to change the chosen option or resolve a key uncertainty.\n\n"
+        "Return STRICT JSON on one line:\n"
+        '{"decision":"YES"|"NO","confidence":0-100,"reason":"short"}\n\n'
+        f"Question: {question}\n"
+        f"Options: {opts}\n"
+    )
+    out = handler.get_output_multiagent(
+        user_input=user_input, temperature=0, max_tokens=80, system_role=system_role
+    )
+
+    raw = (out or "").strip()
+    # Best-effort JSON parse (some models may include leading/trailing text).
+    try:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            obj = json.loads(raw[start : end + 1])
+            dec = str(obj.get("decision", "")).strip().upper()
+            conf = int(obj.get("confidence", 0) or 0)
+            return (dec == "YES") and (conf >= 70)
+    except Exception:
+        pass
+
+    # Fallback (conservative): YES only if it explicitly contains YES and not NO.
+    s = raw.upper()
+    if "YES" in s and "NO" not in s:
+        return True
+    return False
+
+
 def main() -> int:
     _load_dotenv_if_present()
+    _add_project_root_to_syspath()
     _add_upstream_to_syspath()
 
     p = argparse.ArgumentParser()
@@ -193,26 +265,129 @@ def main() -> int:
         default="chatgpt",
         help="Run label used for output filename (does not have to match provider model id).",
     )
-    p.add_argument("--dataset_name", default="MedQA", choices=["MedQA", "PubMedQA", "MedMCQA", "MedicationQA"])
+    p.add_argument(
+        "--run_tag",
+        default="",
+        help="Optional short tag appended to output filename (e.g. ablation name).",
+    )
+    p.add_argument(
+        "--dataset_name",
+        default="MedQA",
+        choices=["MedQA", "PubMedQA", "MedMCQA", "MedicationQA"],
+    )
     p.add_argument("--dataset_dir", default="vendor/med_agents/datasets/MedQA/")
     p.add_argument("--start_pos", type=int, default=0)
     p.add_argument("--end_pos", type=int, default=5, help="-1 means full dataset")
     p.add_argument("--output_dir", default="outputs/MedQA/")
-    p.add_argument("--method", type=str, default="syn_verif", choices=["syn_verif", "syn_only", "anal_only", "base_direct", "base_cot"])
+    p.add_argument(
+        "--method",
+        type=str,
+        default="syn_verif",
+        choices=["syn_verif", "syn_only", "anal_only", "base_direct", "base_cot"],
+    )
     p.add_argument("--max_attempt_vote", type=int, default=3)
-    p.add_argument("--overwrite", action="store_true", help="overwrite output file (default: append)")
-    p.add_argument("--dry_run", action="store_true", help="no API calls; writes stub records for wiring checks only")
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="overwrite output file (default: append)",
+    )
+    p.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="no API calls; writes stub records for wiring checks only",
+    )
+    p.add_argument(
+        "--evidence_json",
+        type=str,
+        default="",
+        help="Optional evidence cache JSON (Self-BioRAG style). If empty, no evidence is used.",
+    )
+    p.add_argument(
+        "--evidence_mode",
+        choices=["none", "always", "ret_gate"],
+        default="none",
+        help="none: no evidence; always: always inject evidence; ret_gate: inject only if gate says YES.",
+    )
+    p.add_argument("--evidence_topk", type=int, default=5)
+    p.add_argument("--evidence_max_chars", type=int, default=2500)
+    p.add_argument(
+        "--evidence_filter_mode",
+        choices=["off", "artifact_only"],
+        default="artifact_only",
+        help="Runtime filtering for evidence[] snippets (you can also pre-filter offline).",
+    )
+    p.add_argument("--evidence_min_snip_chars", type=int, default=80)
+    p.add_argument(
+        "--ret_gate_conf_threshold",
+        type=int,
+        default=70,
+        help="For evidence_mode=ret_gate: require gate confidence >= this value (0-100).",
+    )
+    p.add_argument(
+        "--ret_gate_budget",
+        type=int,
+        default=-1,
+        help="For evidence_mode=ret_gate: max number of YES decisions allowed in this run (-1 = unlimited).",
+    )
+    p.add_argument(
+        "--ret_gate_log",
+        action="store_true",
+        help="If set, include raw gate output + decision fields in each output record.",
+    )
+    p.add_argument(
+        "--log_evidence",
+        action="store_true",
+        help="If set, store the formatted evidence context (candidate + used) in each output record.",
+    )
     args = p.parse_args()
 
     output_dir = _project_root() / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"{args.model_name}-{args.method}.jsonl"
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    tag = (args.run_tag or "").strip()
+    safe_tag = ""
+    if tag:
+        safe_tag = "".join(ch for ch in tag if ch.isalnum() or ch in ("-", "_"))
+        safe_tag = safe_tag[:40]
+    tag_part = f"-{safe_tag}" if safe_tag else ""
+    out_path = output_dir / f"{args.model_name}-{args.method}{tag_part}-{run_ts}.jsonl"
     if args.overwrite and out_path.exists():
         out_path.unlink()
 
     # upstream imports (flat)
     from data_utils import MyDataset  # type: ignore
     from utils import fully_decode  # type: ignore
+
+    evidence_cache = None
+    if args.evidence_mode != "none" and args.evidence_json and not args.dry_run:
+        # local project import
+        from src.evidence import (
+            EvidenceFormatConfig,
+            format_evidence_context,
+            load_evidence_json,
+        )
+
+        evidence_path = Path(args.evidence_json)
+        if not evidence_path.is_absolute():
+            evidence_path = _project_root() / evidence_path
+        if not evidence_path.exists():
+            raise RuntimeError(
+                "Evidence file not found: "
+                f"{evidence_path}\n\n"
+                "Fix:\n"
+                "1) Point --evidence_json to an existing file (e.g. data/retrieved_med_qa_test.json), OR\n"
+                "2) Generate a filtered file first:\n"
+                "   python3 scripts/filter_evidence_leakage.py "
+                "--evidence_json data/retrieved_med_qa_test.json "
+                "--out_json data/retrieved_med_qa_test.filtered.json --overwrite\n"
+            )
+        evidence_cache = load_evidence_json(evidence_path)
+        evidence_cfg = EvidenceFormatConfig(
+            topk=args.evidence_topk,
+            max_chars=args.evidence_max_chars,
+            min_snip_chars=args.evidence_min_snip_chars,
+            filter_mode=args.evidence_filter_mode,
+        )
 
     if args.dry_run:
         handler = None
@@ -237,12 +412,17 @@ def main() -> int:
     dataobj = MyDataset("test", args, traindata_obj=None)
     end_pos = len(dataobj) if args.end_pos == -1 else args.end_pos
     test_range = range(args.start_pos, end_pos)
+    injected_count = 0
 
     with out_path.open("a", encoding="utf-8") as f:
         for idx in tqdm.tqdm(test_range, desc=f"{args.start_pos} ~ {end_pos}"):
             raw_sample = dataobj.get_by_idx(idx)
             question_raw = raw_sample["question"]
-            question = question_raw if question_raw and question_raw[-1] in punctuation else question_raw + "?"
+            question = (
+                question_raw
+                if question_raw and question_raw[-1] in punctuation
+                else question_raw + "?"
+            )
 
             if args.dataset_name in ["MedQA", "MedMCQA"] or "MMLU" in args.dataset_name:
                 options = raw_sample["options"]
@@ -268,11 +448,115 @@ def main() -> int:
                 }
             else:
                 assert handler is not None
-                data_info = fully_decode(idx, idx, question, options, gold_answer, handler, args, dataobj)
+                evidence_context = None
+                gate_raw = None
+                gate_decision = None
+                candidate_ctx = None
+                if evidence_cache is not None and 0 <= idx < len(evidence_cache):
+                    from src.evidence import format_evidence_context
+
+                    candidate_ctx = format_evidence_context(
+                        evidence_cache[idx], evidence_cfg
+                    )
+                    if candidate_ctx:
+                        if args.evidence_mode == "always":
+                            evidence_context = candidate_ctx
+                        elif args.evidence_mode == "ret_gate":
+                            if (
+                                args.ret_gate_budget != -1
+                                and injected_count >= args.ret_gate_budget
+                            ):
+                                gate_decision = False
+                            else:
+                                # Inline gate to optionally log raw output; keep behavior deterministic.
+                                opts_for_gate = options
+                                try:
+                                    opts_for_gate = json.dumps(
+                                        options, ensure_ascii=False
+                                    )
+                                except Exception:
+                                    pass
+                                system_role = "You are a retrieval decision module for medical QA."
+                                user_input = (
+                                    "You decide whether to inject external evidence excerpts.\n"
+                                    "Important:\n"
+                                    "- Evidence is noisy and can mislead.\n"
+                                    "- Retrieving/using evidence is costly.\n"
+                                    "- Default to NO.\n"
+                                    "- Say YES only if evidence is very likely to change the chosen option or resolve a key uncertainty.\n\n"
+                                    "Return STRICT JSON on one line:\n"
+                                    '{"decision":"YES"|"NO","confidence":0-100,"reason":"short"}\n\n'
+                                    f"Question: {question}\n"
+                                    f"Options: {opts_for_gate}\n"
+                                )
+                                gate_raw = handler.get_output_multiagent(
+                                    user_input=user_input,
+                                    temperature=0,
+                                    max_tokens=80,
+                                    system_role=system_role,
+                                )
+                                raw = (gate_raw or "").strip()
+                                gate_decision = False
+                                try:
+                                    start = raw.find("{")
+                                    end = raw.rfind("}")
+                                    if start != -1 and end != -1 and end > start:
+                                        obj = json.loads(raw[start : end + 1])
+                                        dec = (
+                                            str(obj.get("decision", "")).strip().upper()
+                                        )
+                                        conf = int(obj.get("confidence", 0) or 0)
+                                        gate_decision = (dec == "YES") and (
+                                            conf >= args.ret_gate_conf_threshold
+                                        )
+                                except Exception:
+                                    # fallback conservative parse
+                                    s = raw.upper()
+                                    gate_decision = bool("YES" in s and "NO" not in s)
+
+                            if gate_decision:
+                                evidence_context = candidate_ctx
+                                injected_count += 1
+
+                data_info = fully_decode(
+                    idx,
+                    idx,
+                    question,
+                    options,
+                    gold_answer,
+                    handler,
+                    args,
+                    dataobj,
+                    evidence_context=evidence_context,
+                )
                 # add extra audit-friendly fields without changing upstream logic/prompts
                 data_info["idx"] = idx
                 if isinstance(raw_sample, dict) and "meta_info" in raw_sample:
                     data_info["meta_info"] = raw_sample["meta_info"]
+                if evidence_cache is not None:
+                    data_info["evidence_mode"] = args.evidence_mode
+                    data_info["evidence_injected"] = bool(evidence_context)
+                    if args.log_evidence:
+                        data_info["evidence_json"] = args.evidence_json
+                        data_info["evidence_params"] = {
+                            "topk": args.evidence_topk,
+                            "max_chars": args.evidence_max_chars,
+                            "min_snip_chars": args.evidence_min_snip_chars,
+                            "filter_mode": args.evidence_filter_mode,
+                        }
+                        # candidate_ctx: what we *would* inject for this idx (after filtering/truncation)
+                        data_info["evidence_candidate_context"] = candidate_ctx or ""
+                        # evidence_context: what we *did* inject (empty if gate said NO)
+                        data_info["evidence_used_context"] = evidence_context or ""
+                    if args.evidence_mode == "ret_gate":
+                        data_info["ret_gate_conf_threshold"] = (
+                            args.ret_gate_conf_threshold
+                        )
+                        data_info["ret_gate_budget"] = args.ret_gate_budget
+                        data_info["ret_gate_budget_used"] = injected_count
+                        if args.ret_gate_log:
+                            data_info["ret_gate_raw"] = gate_raw
+                            data_info["ret_gate_decision"] = gate_decision
 
             f.write(json.dumps(data_info) + "\n")
 
@@ -289,5 +573,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

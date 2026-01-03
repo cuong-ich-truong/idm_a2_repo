@@ -82,6 +82,52 @@ python3 scripts/run_medagents_baseline.py \
   --output_dir outputs/MedQA/
 ```
 
+### Real run (small slice) — evidence injection (POC-A)
+
+Always inject evidence (from cache):
+
+```bash
+python3 scripts/run_medagents_baseline.py \
+  --llm_provider openai \
+  --model_name openai_evd \
+  --dataset_name MedQA \
+  --dataset_dir vendor/med_agents/datasets/MedQA/ \
+  --method syn_verif \
+  --max_attempt_vote 3 \
+  --overwrite \
+  --start_pos 0 \
+  --end_pos 10 \
+  --output_dir outputs/MedQA/ \
+  --evidence_json data/retrieved_med_qa_test.json \
+  --evidence_mode always \
+  --evidence_topk 5 \
+  --evidence_max_chars 2500 \
+  --run_tag t0_10 \
+  --log_evidence
+```
+
+RET gate (inject only when the gate says YES):
+
+```bash
+python3 scripts/run_medagents_baseline.py \
+  --llm_provider openai \
+  --model_name openai_ret \
+  --dataset_name MedQA \
+  --dataset_dir vendor/med_agents/datasets/MedQA/ \
+  --method syn_verif \
+  --max_attempt_vote 3 \
+  --overwrite \
+  --start_pos 0 \
+  --end_pos 1 \
+  --output_dir outputs/MedQA/ \
+  --evidence_json data/retrieved_med_qa_test.filtered.json \
+  --evidence_mode ret_gate \
+  --ret_gate_conf_threshold 80 \
+  --ret_gate_budget 5 \
+  --ret_gate_log \
+  --run_tag t1
+```
+
 ### Real run (small slice) — Azure OpenAI
 
 ```bash
@@ -102,7 +148,11 @@ python3 scripts/run_medagents_baseline.py \
 
 ```bash
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai-syn_verif.jsonl
+  --pred_file outputs/MedQA/openai-syn_verif-t0_10-20260103_153310_597275.jsonl
+
+python3 scripts/eval_medagents_outputs.py \
+  --pred_file outputs/MedQA/openai_evd-syn_verif-t0_10-20260103_154359_810591.jsonl
+
 ```
 
 ## Leakage checks (for POC-A evidence cache)
