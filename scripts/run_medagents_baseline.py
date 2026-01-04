@@ -313,11 +313,7 @@ def main() -> int:
                 "Evidence file not found: "
                 f"{evidence_path}\n\n"
                 "Fix:\n"
-                "1) Point --evidence_json to an existing file (e.g. data/retrieved_med_qa_test.json), OR\n"
-                "2) Generate a filtered file first:\n"
-                "   python3 scripts/filter_evidence_leakage.py "
-                "--evidence_json data/retrieved_med_qa_test.json "
-                "--out_json data/retrieved_med_qa_test.filtered.json --overwrite\n"
+                "Point --evidence_json to an existing file (e.g. data/retrieved_med_qa_test.json).\n"
             )
         evidence_cache = load_evidence_json(evidence_path)
         evidence_cfg = EvidenceFormatConfig(
