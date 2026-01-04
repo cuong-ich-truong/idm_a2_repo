@@ -235,11 +235,6 @@ def main() -> int:
     p.add_argument("--output_dir", default="outputs/MedQA/")
     p.add_argument("--max_attempt_vote", type=int, default=3)
     p.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="overwrite output file (default: append)",
-    )
-    p.add_argument(
         "--dry_run",
         action="store_true",
         help="no API calls; writes stub records for wiring checks only",
@@ -249,12 +244,6 @@ def main() -> int:
         type=str,
         default="",
         help="Optional evidence cache JSON (Self-BioRAG style). If empty, no evidence is used.",
-    )
-    p.add_argument(
-        "--evidence_mode",
-        choices=["none", "always"],
-        default="none",
-        help="none: no evidence; always: always inject evidence.",
     )
     p.add_argument("--evidence_topk", type=int, default=5)
     p.add_argument("--evidence_max_chars", type=int, default=2500)
@@ -291,7 +280,7 @@ def main() -> int:
     from utils import fully_decode  # type: ignore
 
     evidence_cache = None
-    if args.evidence_mode != "none" and args.evidence_json and not args.dry_run:
+    if args.evidence_json and not args.dry_run:
         # local project import
         from src.evidence import (
             EvidenceFormatConfig,
@@ -368,9 +357,7 @@ def main() -> int:
                     candidate_ctx = format_evidence_context(
                         evidence_cache[idx], evidence_cfg
                     )
-                    if candidate_ctx:
-                        if args.evidence_mode == "always":
-                            evidence_context = candidate_ctx
+                    evidence_context = candidate_ctx or None
 
                 data_info = fully_decode(
                     idx,
@@ -388,7 +375,7 @@ def main() -> int:
                 if isinstance(raw_sample, dict) and "meta_info" in raw_sample:
                     data_info["meta_info"] = raw_sample["meta_info"]
                 if evidence_cache is not None:
-                    data_info["evidence_mode"] = args.evidence_mode
+                    data_info["evidence_enabled"] = bool(args.evidence_json)
                     data_info["evidence_injected"] = bool(evidence_context)
                     if args.log_evidence:
                         data_info["evidence_json"] = args.evidence_json

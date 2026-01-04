@@ -57,6 +57,14 @@ python scripts/run_medagents_baseline.py \
   --output_dir outputs/MedQA/
 ```
 
+### List all args / help
+
+```bash
+# Standard argparse help
+python3 scripts/run_medagents_baseline.py -h
+python3 scripts/run_medagents_baseline.py --help
+```
+
 ### Real run (small slice) — OpenAI direct
 
 ```bash
@@ -86,7 +94,6 @@ python3 scripts/run_medagents_baseline.py \
   --end_pos 1 \
   --output_dir outputs/MedQA/ \
   --evidence_json data/retrieved_med_qa_test.json \
-  --evidence_mode always \
   --evidence_topk 5 \
   --evidence_max_chars 2500 \
   --run_tag t0_1 \
