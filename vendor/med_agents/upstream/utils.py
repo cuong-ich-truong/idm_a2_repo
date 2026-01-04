@@ -1,4 +1,5 @@
 from prompt_generator import *
+from prompt_generator_extended import *
 from data_utils import *
 
 
