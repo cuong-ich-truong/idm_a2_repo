@@ -263,7 +263,7 @@ def main() -> int:
 
     output_dir = _project_root() / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     tag = (args.run_tag or "").strip()
     safe_tag = ""
     if tag:
