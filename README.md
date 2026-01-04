@@ -65,7 +65,6 @@ python3 scripts/run_medagents_baseline.py \
   --model_name openai \
   --dataset_name MedQA \
   --dataset_dir vendor/med_agents/datasets/MedQA/ \
-  --method syn_verif \
   --max_attempt_vote 3 \
   --start_pos 0 \
   --end_pos 1 \
@@ -82,7 +81,6 @@ python3 scripts/run_medagents_baseline.py \
   --model_name openai_evd \
   --dataset_name MedQA \
   --dataset_dir vendor/med_agents/datasets/MedQA/ \
-  --method syn_verif \
   --max_attempt_vote 3 \
   --start_pos 0 \
   --end_pos 1 \
@@ -99,10 +97,10 @@ python3 scripts/run_medagents_baseline.py \
 
 ```bash
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai-syn_verif-t0_10-20260103_153310_597275.jsonl
+  --pred_file outputs/MedQA/openai-<TIMESTAMP>.jsonl
 
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai_evd-syn_verif-t0_10-20260103_154359_810591.jsonl
+  --pred_file outputs/MedQA/openai_evd-t0_1-<TIMESTAMP>.jsonl
 
 ```
 

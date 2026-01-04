@@ -233,12 +233,6 @@ def main() -> int:
     p.add_argument("--start_pos", type=int, default=0)
     p.add_argument("--end_pos", type=int, default=5, help="-1 means full dataset")
     p.add_argument("--output_dir", default="outputs/MedQA/")
-    p.add_argument(
-        "--method",
-        type=str,
-        default="syn_verif",
-        choices=["syn_verif", "syn_only", "anal_only", "base_direct", "base_cot"],
-    )
     p.add_argument("--max_attempt_vote", type=int, default=3)
     p.add_argument(
         "--overwrite",
@@ -287,7 +281,7 @@ def main() -> int:
         safe_tag = "".join(ch for ch in tag if ch.isalnum() or ch in ("-", "_"))
         safe_tag = safe_tag[:40]
     tag_part = f"-{safe_tag}" if safe_tag else ""
-    out_path = output_dir / f"{args.model_name}-{args.method}{tag_part}-{run_ts}.jsonl"
+    out_path = output_dir / f"{args.model_name}{tag_part}-{run_ts}.jsonl"
     log_path = out_path.with_suffix(".log")
     _setup_logging(log_path)
     LOGGER.info("[log] %s", log_path)
