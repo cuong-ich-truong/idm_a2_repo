@@ -14,6 +14,11 @@ def fully_decode(
     dataobj,
     evidence_context=None,
 ):
+    """
+    NOTE: This is based on the original MedAgents `fully_decode` implementation.
+    For this project we removed all shortcut modes (e.g., baselines / partial flows)
+    and keep only the single full pipeline that runs all 5 stages (1→2→3→4→5).
+    """
 
     (
         question_domains,
