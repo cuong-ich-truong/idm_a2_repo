@@ -96,7 +96,7 @@ python3 scripts/run_medagents_baseline.py \
   --evidence_json data/retrieved_med_qa_test.json \
   --evidence_topk 5 \
   --evidence_max_chars 2500 \
-  --run_tag t0_1 \
+  --run_tag v1 \
   --log_evidence
 ```
 
@@ -104,10 +104,10 @@ python3 scripts/run_medagents_baseline.py \
 
 ```bash
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai-<TIMESTAMP>.jsonl
+  --pred_file outputs/MedQA/openai-s0-e1-<TIMESTAMP>.jsonl
 
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai_evd-t0_1-<TIMESTAMP>.jsonl
+  --pred_file outputs/MedQA/openai_evd-t0_1-s0-e1-<TIMESTAMP>.jsonl
 
 ```
 

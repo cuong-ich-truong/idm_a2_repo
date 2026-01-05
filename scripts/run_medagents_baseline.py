@@ -264,13 +264,15 @@ def main() -> int:
     output_dir = _project_root() / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    end_pos_label = "all" if args.end_pos == -1 else str(args.end_pos)
+    range_part = f"-s{args.start_pos}-e{end_pos_label}"
     tag = (args.run_tag or "").strip()
     safe_tag = ""
     if tag:
         safe_tag = "".join(ch for ch in tag if ch.isalnum() or ch in ("-", "_"))
         safe_tag = safe_tag[:40]
     tag_part = f"-{safe_tag}" if safe_tag else ""
-    out_path = output_dir / f"{args.model_name}{tag_part}-{run_ts}.jsonl"
+    out_path = output_dir / f"{args.model_name}{tag_part}{range_part}-{run_ts}.jsonl"
     log_path = out_path.with_suffix(".log")
     _setup_logging(log_path)
     LOGGER.info("[log] %s", log_path)
