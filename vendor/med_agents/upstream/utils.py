@@ -3,6 +3,19 @@ from prompt_generator_extended import *
 from data_utils import *
 
 
+def _set_llm_stage(handler, stage: str, **meta) -> None:
+    """
+    Best-effort stage tagging for detailed LLM-call logs.
+    Our wrapper handler reads `current_stage` / `current_meta` if present.
+    """
+    try:
+        setattr(handler, "current_stage", stage)
+        setattr(handler, "current_meta", meta)
+    except Exception:
+        # keep upstream logic robust even if handler doesn't support attrs
+        return
+
+
 def fully_decode(
     qid,
     realqid,
@@ -32,6 +45,7 @@ def fully_decode(
 
     # Full pipeline consists of 5 stages (Stage 1→2→3→4→5).
     # Stage 1: Expert Gathering (domain routing)
+    _set_llm_stage(handler, "S1_question_domain", qid=qid, realqid=realqid)
     question_classifier, prompt_get_question_domain = get_question_domains_prompt(
         question
     )
@@ -47,6 +61,7 @@ def fully_decode(
         )
     question_domains = raw_question_domain.split(":")[-1].strip().split(" | ")
 
+    _set_llm_stage(handler, "S1_options_domain", qid=qid, realqid=realqid)
     options_classifier, prompt_get_options_domain = get_options_domains_prompt(
         question, options
     )
@@ -65,6 +80,9 @@ def fully_decode(
     # Stage 2: Analysis Proposition (evidence injected here)
     tmp_question_analysis = []
     for _domain in question_domains:
+        _set_llm_stage(
+            handler, "S2_question_analysis", qid=qid, realqid=realqid, domain=_domain
+        )
         question_analyzer, prompt_get_question_analysis = (
             get_question_analysis_prompt_with_evidence(
                 question, _domain, evidence_context
@@ -83,6 +101,9 @@ def fully_decode(
 
     tmp_option_analysis = []
     for _domain in options_domains:
+        _set_llm_stage(
+            handler, "S2_options_analysis", qid=qid, realqid=realqid, domain=_domain
+        )
         option_analyzer, prompt_get_options_analyses = (
             get_options_analysis_prompt_with_evidence(
                 question, options, _domain, question_analyses, evidence_context
@@ -101,6 +122,7 @@ def fully_decode(
     q_analyses_text = transform_dict2text(question_analyses, "question", question)
     o_analyses_text = transform_dict2text(option_analyses, "options", options)
 
+    _set_llm_stage(handler, "S3_synth_report", qid=qid, realqid=realqid)
     synthesizer, prompt_get_synthesized_report = get_synthesized_report_prompt(
         q_analyses_text, o_analyses_text
     )
@@ -126,6 +148,14 @@ def fully_decode(
         hasno_flag = False
         for domain in all_domains:
             voter, cons_prompt = get_consensus_prompt(domain, syn_report)
+            _set_llm_stage(
+                handler,
+                "S4_vote",
+                qid=qid,
+                realqid=realqid,
+                domain=domain,
+                round=num_try,
+            )
             raw_domain_opi = handler.get_output_multiagent(
                 user_input=cons_prompt,
                 temperature=0,
@@ -136,6 +166,14 @@ def fully_decode(
             domain_opinions[domain] = domain_opinion
             if domain_opinion == "no":
                 advice_prompt = get_consensus_opinion_prompt(domain, syn_report)
+                _set_llm_stage(
+                    handler,
+                    "S4_advice",
+                    qid=qid,
+                    realqid=realqid,
+                    domain=domain,
+                    round=num_try,
+                )
                 advice_output = handler.get_output_multiagent(
                     user_input=advice_prompt,
                     temperature=0,
@@ -146,6 +184,9 @@ def fully_decode(
                 hasno_flag = True
         if hasno_flag:
             revision_prompt = get_revision_prompt(syn_report, revision_advice)
+            _set_llm_stage(
+                handler, "S4_revision", qid=qid, realqid=realqid, round=num_try
+            )
             revised_analysis = handler.get_output_multiagent(
                 user_input=revision_prompt,
                 temperature=0,
@@ -159,6 +200,7 @@ def fully_decode(
 
     # Stage 5: Decision Making (final answer derivation)
     answer_prompt = get_final_answer_prompt_wsyn(syn_report)
+    _set_llm_stage(handler, "S5_final", qid=qid, realqid=realqid)
     output = handler.get_output_multiagent(
         user_input=answer_prompt,
         temperature=0,

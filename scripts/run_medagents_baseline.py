@@ -111,11 +111,14 @@ class _OpenAIChatHandler:
             try:
                 self.call_count += 1
                 call_no = self.call_count
+                stage = getattr(self, "current_stage", None) or ""
+                meta = getattr(self, "current_meta", None) or {}
                 t0 = time.time()
                 sys_len = len(system_role or "")
                 usr_len = len(user_input or "")
                 LOGGER.debug(
-                    "[openai] call#%s attempt=%s/%s model=%s max_tokens=%s temp=%s chars(system=%s,user=%s)",
+                    "[openai] %s call#%s attempt=%s/%s model=%s max_tokens=%s temp=%s chars(system=%s,user=%s)",
+                    stage,
                     call_no,
                     attempt + 1,
                     max_attempts,
@@ -142,6 +145,7 @@ class _OpenAIChatHandler:
                 self.total_wall_s += dt
 
                 usage = getattr(resp, "usage", None)
+                pt = ct = tt = None
                 if usage:
                     pt = int(getattr(usage, "prompt_tokens", 0) or 0)
                     ct = int(getattr(usage, "completion_tokens", 0) or 0)
@@ -163,13 +167,45 @@ class _OpenAIChatHandler:
                         call_no,
                         dt,
                     )
+                out_text = "ERROR."
                 if (
                     resp.choices
                     and resp.choices[0].message
                     and "content" in resp.choices[0].message
                 ):
-                    return resp.choices[0].message["content"]
-                return "ERROR."
+                    out_text = resp.choices[0].message["content"]
+
+                # Full per-call record (prompt + output) goes to the log file only (DEBUG level).
+                LOGGER.debug(
+                    "[llm_call] %s",
+                    json.dumps(
+                        {
+                            "call_no": call_no,
+                            "attempt": attempt + 1,
+                            "model": self.model,
+                            "stage": stage,
+                            "meta": meta,
+                            "max_tokens": max_tokens,
+                            "temperature": temperature,
+                            "frequency_penalty": frequency_penalty,
+                            "presence_penalty": presence_penalty,
+                            "stop": stop,
+                            "duration_s": round(dt, 4),
+                            "tokens": {
+                                "prompt_tokens": pt,
+                                "completion_tokens": ct,
+                                "total_tokens": tt,
+                            },
+                            "prompt": {
+                                "system": system_role or "",
+                                "user": user_input or "",
+                            },
+                            "output": out_text,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+                return out_text
             except Exception as e:
                 LOGGER.warning(
                     "[warn] OpenAI call failed (attempt %s/%s): %r",
