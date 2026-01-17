@@ -72,11 +72,12 @@ python3 scripts/run_medagents_baseline.py \
   --llm_provider openai \
   --model_name openai \
   --dataset_name MedQA \
-  --dataset_dir vendor/med_agents/datasets/MedQA/ \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
   --max_attempt_vote 3 \
   --start_pos 0 \
-  --end_pos 1 \
-  --output_dir outputs/MedQA/
+  --end_pos 100 \
+  --run_tag v1 \
+  --output_dir outputs/MedQA/raw
 ```
 
 ### Real run (small slice) — evidence injection (POC-A)
@@ -88,11 +89,11 @@ python3 scripts/run_medagents_baseline.py \
   --llm_provider openai \
   --model_name openai_evd \
   --dataset_name MedQA \
-  --dataset_dir vendor/med_agents/datasets/MedQA/ \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
   --max_attempt_vote 3 \
   --start_pos 0 \
-  --end_pos 1 \
-  --output_dir outputs/MedQA/ \
+  --end_pos 100 \
+  --output_dir outputs/MedQA/raw \
   --evidence_json data/retrieved_med_qa_test.json \
   --evidence_topk 5 \
   --evidence_max_chars 2500 \
@@ -104,11 +105,37 @@ python3 scripts/run_medagents_baseline.py \
 
 ```bash
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai-s0-e1-<TIMESTAMP>.jsonl
+  --pred_file outputs/MedQA/base/openai-v1-s0-e300.jsonl
 
 python3 scripts/eval_medagents_outputs.py \
-  --pred_file outputs/MedQA/openai_evd-t0_1-s0-e1-<TIMESTAMP>.jsonl
+  --pred_file outputs/MedQA/base/openai-v1-s450-e750.jsonl
 
+python3 scripts/eval_medagents_outputs.py \
+  --pred_file outputs/MedQA/base/openai-v1-s900-e1200.jsonl
+
+python3 scripts/eval_medagents_outputs.py \
+  --pred_file outputs/MedQA/rag/openai_evd-v1-s0-e300.jsonl
+
+python3 scripts/eval_medagents_outputs.py \
+  --pred_file outputs/MedQA/rag/openai_evd-v1-s450-e750.jsonl
+
+python3 scripts/eval_medagents_outputs.py \
+  --pred_file outputs/MedQA/rag/openai_evd-v1-s900-e1200.jsonl
+```
+
+### Other useful scripts
+
+```bash
+python3 scripts/filter_medqa_step23.py \
+  --input_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
+  --output_jsonl vendor/med_agents/datasets/MedQA/test.step2_3.jsonl
+
+# Verify evidence cache aligns 1-1 with dataset test.jsonl (by index + question text)
+python3 scripts/verify_evidence_alignment.py \
+  --dataset_jsonl vendor/med_agents/datasets/MedQA/test.jsonl \
+  --evidence_json data/retrieved_med_qa_test.json \
+  --check_question_text \
+  --require_nonempty_evidence
 ```
 
 ## Project Structure

@@ -1,6 +1,7 @@
 from prompt_generator import *
 from prompt_generator_extended import *
 from data_utils import *
+from data_utils_extended import cleansing_syn_report_extend
 
 
 def _set_llm_stage(handler, stage: str, **meta) -> None:
@@ -132,7 +133,7 @@ def fully_decode(
         max_tokens=2500,
         system_role=synthesizer,
     )
-    syn_report = cleansing_syn_report(question, options, raw_synthesized_report)
+    syn_report = cleansing_syn_report_extend(question, options, raw_synthesized_report)
 
     # Stage 4: Collaborative Consultation (consensus loop)
     all_domains = question_domains + options_domains
@@ -193,7 +194,9 @@ def fully_decode(
                 max_tokens=2500,
                 system_role="",
             )
-            syn_report = cleansing_syn_report(question, options, revised_analysis)
+            syn_report = cleansing_syn_report_extend(
+                question, options, revised_analysis
+            )
             revision_history.append(revision_advice)
             syn_repo_history.append(syn_report)
         vote_history.append(domain_opinions)

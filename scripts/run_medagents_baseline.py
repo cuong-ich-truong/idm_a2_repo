@@ -266,6 +266,15 @@ def main() -> int:
         choices=["MedQA", "PubMedQA", "MedMCQA", "MedicationQA"],
     )
     p.add_argument("--dataset_dir", default="vendor/med_agents/datasets/MedQA/")
+    p.add_argument(
+        "--dataset_jsonl",
+        type=str,
+        default="",
+        help=(
+            "Optional explicit dataset JSONL file (e.g. vendor/med_agents/datasets/MedQA/test.step2_3.jsonl). "
+            "If set, this overrides --dataset_dir by deriving dataset_dir=<parent> and split=<file stem>."
+        ),
+    )
     p.add_argument("--start_pos", type=int, default=0)
     p.add_argument("--end_pos", type=int, default=5, help="-1 means full dataset")
     p.add_argument("--output_dir", default="outputs/MedQA/")
@@ -350,7 +359,19 @@ def main() -> int:
         model = _configure_openai_direct()
         handler = _OpenAIChatHandler(model)
 
-    dataobj = MyDataset("test", args, traindata_obj=None)
+    dataset_split = "test"
+    if args.dataset_jsonl:
+        ds_path = Path(args.dataset_jsonl)
+        if not ds_path.is_absolute():
+            ds_path = _project_root() / ds_path
+        if not ds_path.exists():
+            raise RuntimeError(f"Dataset file not found: {ds_path}")
+        # Keep upstream loader unchanged: it loads <dataset_dir>/<split>.jsonl
+        # So we map: dataset_dir=parent, split=stem.
+        args.dataset_dir = str(ds_path.parent)
+        dataset_split = ds_path.stem
+
+    dataobj = MyDataset(dataset_split, args, traindata_obj=None)
     end_pos = len(dataobj) if args.end_pos == -1 else args.end_pos
     test_range = range(args.start_pos, end_pos)
     with out_path.open("a", encoding="utf-8") as f:

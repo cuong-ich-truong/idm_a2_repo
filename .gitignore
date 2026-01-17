@@ -50,6 +50,9 @@ checkpoints/
 logs/
 wandb/
 
+# local raw data
+outputs/MedQA/raw
+
 # Local secrets (never commit)
 .env
 .env.*
